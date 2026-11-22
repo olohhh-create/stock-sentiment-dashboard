@@ -1,0 +1,567 @@
+<!DOCTYPE html>
+<html lang="zh-TW" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>股市多指標情緒儀表板 Prototype</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        darkbg: '#0f172a',
+                        cardbg: '#1e293b',
+                        cardborder: '#334155',
+                        panic: '#10b981', // 綠色 - 買點/恐慌
+                        overheated: '#ef4444', // 紅色 - 賣點/過熱
+                        warning: '#f59e0b',
+                        neutral: '#3b82f6'
+                    }
+                }
+            }
+        }
+    </script>
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Apache ECharts CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background-color: #0f172a;
+            color: #f8fafc;
+        }
+        .chart-box {
+            height: 260px;
+            width: 100%;
+        }
+        .custom-scrollbar::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+            background: #475569;
+            border-radius: 4px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-track {
+            background: #1e293b;
+        }
+    </style>
+</head>
+<body class="min-h-screen bg-slate-900 text-slate-100 flex flex-col custom-scrollbar">
+
+    <!-- Header Controls & Title -->
+    <header class="sticky top-0 z-50 bg-slate-900/90 backdrop-blur-md border-b border-slate-800 px-4 py-3 shadow-lg">
+        <div class="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-4">
+            <div class="flex items-center space-x-3">
+                <div class="bg-indigo-600 p-2.5 rounded-xl shadow-indigo-500/20 shadow-lg">
+                    <i class="fa-solid me-0 fa-chart-line text-xl text-white"></i>
+                </div>
+                <div>
+                    <h1 class="text-xl font-bold tracking-tight bg-gradient-to-r from-blue-400 via-indigo-300 to-purple-400 bg-clip-text text-transparent">
+                        股市多指標情緒儀表板
+                    </h1>
+                    <p class="text-xs text-slate-400">11 大市場籌碼與情緒指標 · 全圖表時間軸同步連動原型</p>
+                </div>
+            </div>
+
+            <!-- Global Controls -->
+            <div class="flex flex-wrap items-center gap-3">
+                <!-- Data Update Status Badge -->
+                <span id="data-status-badge" class="text-xs font-mono bg-slate-800 text-slate-400 px-3 py-1.5 rounded-lg border border-slate-700 flex items-center gap-1.5">
+                    <i class="fa-solid fa-spinner fa-spin text-indigo-400"></i> 載入資料中...
+                </span>
+
+                <!-- Master Sync Switch -->
+                <label class="flex items-center cursor-pointer bg-slate-800 hover:bg-slate-700/80 px-3.5 py-1.5 rounded-lg border border-slate-700 transition">
+                    <input type="checkbox" id="sync-toggle" class="sr-only peer" checked>
+                    <div class="w-9 h-5 bg-slate-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-indigo-600 relative"></div>
+                    <span class="ml-2.5 text-xs font-medium text-slate-200 flex items-center gap-1.5">
+                        <i class="fa-solid fa-arrows-left-right text-indigo-400"></i> 時間軸跨圖連動
+                    </span>
+                </label>
+
+                <!-- Reset / Zoom -->
+                <button id="reset-zoom-btn" class="bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs px-3 py-1.5 rounded-lg border border-slate-700 flex items-center gap-1.5 transition">
+                    <i class="fa-solid fa-rotate-right text-slate-400"></i> 重設縮放
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <main class="flex-1 max-w-7xl w-full mx-auto px-4 py-6 space-y-6">
+
+        <!-- Error Alert Banner (Hidden by default) -->
+        <div id="data-error-banner" class="hidden bg-rose-950/90 border border-rose-500/60 text-rose-200 px-5 py-4 rounded-2xl shadow-xl flex items-start gap-3">
+            <i class="fa-solid fa-triangle-exclamation text-rose-400 text-xl mt-0.5"></i>
+            <div class="space-y-1">
+                <h3 class="font-bold text-sm text-rose-100">讀取不到真實來源資料 (data/market-data.json)</h3>
+                <p id="data-error-detail" class="text-xs text-rose-300 leading-relaxed">
+                    無法載入市場數據檔案。請確認您已透過 GitHub Actions 執行過至少一次資料更新，或確認目前是透過網頁伺服器 (GitHub Pages / Local Server) 開啟而非直接雙擊本機 HTML 檔案。
+                </p>
+            </div>
+        </div>
+
+        <!-- Historical Events Jump Presets & Date Focus Display -->
+        <div class="bg-slate-800/80 border border-slate-700/80 rounded-2xl p-4 shadow-xl flex flex-wrap items-center justify-between gap-4">
+            <div class="flex items-center gap-2 flex-wrap">
+                <span class="text-xs font-semibold text-slate-400 flex items-center gap-1">
+                    <i class="fa-solid fa-clock-rotate-left text-indigo-400"></i> 歷史重大轉折跳轉:
+                </span>
+                <button class="event-btn bg-slate-700/60 hover:bg-indigo-600/30 hover:border-indigo-500/50 border border-slate-600 text-xs text-slate-200 px-2.5 py-1 rounded-lg transition" data-date="2020-03-23">
+                    2020-03-23 (Covid 熔斷見底)
+                </button>
+                <button class="event-btn bg-slate-700/60 hover:bg-indigo-600/30 hover:border-indigo-500/50 border border-slate-600 text-xs text-slate-200 px-2.5 py-1 rounded-lg transition" data-date="2022-10-13">
+                    2022-10-13 (聯準會升息谷底)
+                </button>
+                <button class="event-btn bg-slate-700/60 hover:bg-indigo-600/30 hover:border-indigo-500/50 border border-slate-600 text-xs text-slate-200 px-2.5 py-1 rounded-lg transition" data-date="2024-08-05">
+                    2024-08-05 (日圓套利平倉暴跌)
+                </button>
+                <button class="event-btn bg-slate-700/60 hover:bg-indigo-600/30 hover:border-indigo-500/50 border border-slate-600 text-xs text-slate-200 px-2.5 py-1 rounded-lg transition" data-date="2025-02-01">
+                    2025 最近高點/位階
+                </button>
+            </div>
+
+            <!-- Focused Date Display -->
+            <div class="flex items-center gap-3 bg-slate-900/80 px-4 py-1.5 rounded-xl border border-slate-700">
+                <span class="text-xs text-slate-400">目前游標聚焦日期:</span>
+                <span id="focused-date" class="text-sm font-mono font-bold text-indigo-400">2024-08-05</span>
+            </div>
+        </div>
+
+        <!-- Composite Score & Signal Count Cards -->
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <!-- Sentiment Composite Gauge Card -->
+            <div class="bg-slate-800/80 border border-slate-700/80 rounded-2xl p-4 flex flex-col justify-between shadow-lg">
+                <div class="flex justify-between items-center">
+                    <span class="text-xs text-slate-400 font-medium">市場綜合恐慌情緒指數</span>
+                    <i class="fa-solid fa-gauge-high text-indigo-400"></i>
+                </div>
+                <div class="my-2 flex items-baseline gap-2">
+                    <span id="composite-score" class="text-3xl font-extrabold text-emerald-400">18.5</span>
+                    <span class="text-xs text-slate-400">/ 100</span>
+                </div>
+                <div class="w-full bg-slate-700 rounded-full h-2 overflow-hidden">
+                    <div id="composite-bar" class="bg-emerald-500 h-2 rounded-full transition-all duration-300" style="width: 18.5%"></div>
+                </div>
+                <span id="composite-status" class="text-xs font-semibold text-emerald-400 mt-2">極度恐慌 (歷史級買點區域)</span>
+            </div>
+
+            <!-- Buy Signal Summary Card -->
+            <div class="bg-slate-800/80 border border-slate-700/80 rounded-2xl p-4 flex flex-col justify-between shadow-lg">
+                <div class="flex justify-between items-center">
+                    <span class="text-xs text-slate-400 font-medium">觸發短線買點指標數</span>
+                    <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-950 text-emerald-400 border border-emerald-800">
+                        恐慌/超賣
+                    </span>
+                </div>
+                <div class="my-2">
+                    <span id="buy-signal-count" class="text-3xl font-extrabold text-emerald-400">5</span>
+                    <span class="text-sm text-slate-400"> / 11 項觸發</span>
+                </div>
+                <p class="text-xs text-slate-400">VIX, Put/Call, $SPXA50R, Fear&Greed, 融資維持率</p>
+            </div>
+
+            <!-- Sell Signal Summary Card -->
+            <div class="bg-slate-800/80 border border-slate-700/80 rounded-2xl p-4 flex flex-col justify-between shadow-lg">
+                <div class="flex justify-between items-center">
+                    <span class="text-xs text-slate-400 font-medium">觸發過熱賣點指標數</span>
+                    <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-rose-950 text-rose-400 border border-rose-800">
+                        過熱/超買
+                    </span>
+                </div>
+                <div class="my-2">
+                    <span id="sell-signal-count" class="text-3xl font-extrabold text-slate-500">0</span>
+                    <span class="text-sm text-slate-400"> / 11 項觸發</span>
+                </div>
+                <p class="text-xs text-slate-400">目前無過熱訊號警示</p>
+            </div>
+
+            <!-- Market Anchor Card with Drawdown from High -->
+            <div class="bg-slate-800/80 border border-slate-700/80 rounded-2xl p-4 flex flex-col justify-between shadow-lg">
+                <div class="flex justify-between items-center">
+                    <span class="text-xs text-slate-400 font-medium">S&P 500 大盤位階與回檔</span>
+                    <i class="fa-solid fa-arrow-trend-up text-blue-400"></i>
+                </div>
+                <div class="my-1">
+                    <span id="spx-price" class="text-2xl font-extrabold text-slate-100">5,186.3</span>
+                </div>
+                <div class="flex items-center gap-2 mt-1">
+                    <span id="spx-drawdown" class="text-xs font-bold text-amber-400 bg-amber-950/80 border border-amber-800/80 px-2 py-0.5 rounded">自52W高點 -9.4%</span>
+                    <span id="spx-change" class="text-xs font-semibold text-rose-400 ml-auto">-3.0% (日)</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Sticky S&P 500 Master Benchmark Chart -->
+        <div id="sticky-sp500-container" class="sticky top-[60px] z-30 transition-all duration-300">
+            <div class="bg-slate-800/95 backdrop-blur-md border border-indigo-500/30 rounded-2xl p-3 shadow-2xl ring-1 ring-indigo-500/20">
+                <div class="flex items-center justify-between mb-1 px-1">
+                    <div class="flex items-center gap-2">
+                        <span class="w-2.5 h-2.5 rounded-full bg-indigo-400 animate-pulse"></span>
+                        <h3 class="text-xs font-bold text-slate-100 flex items-center gap-2">
+                            S&P 500 指數 (對照大盤)
+                            <span id="sp500-sticky-info" class="text-indigo-300 font-mono text-xs">5,186.3</span>
+                        </h3>
+                        <span class="text-[10px] bg-indigo-950 text-indigo-300 border border-indigo-800 px-1.5 py-0.2 rounded">Sticky 釘選對照</span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <span id="sp500-sticky-dd" class="text-xs font-mono font-bold text-amber-400">距52W高點: -9.4%</span>
+                        <button id="toggle-sp500-height" class="text-slate-400 hover:text-white text-xs px-2 py-0.5 rounded bg-slate-700/60 transition">
+                            <i class="fa-solid fa-compress"></i> 縮小/展開
+                        </button>
+                    </div>
+                </div>
+                <div id="chart-sp500" class="chart-box transition-all duration-200" style="height: 180px;"></div>
+            </div>
+        </div>
+
+        <!-- Filter Tabs -->
+        <div class="flex items-center gap-2 border-b border-slate-800 pb-3 overflow-x-auto">
+            <button class="filter-tab bg-indigo-600 text-white text-xs font-medium px-3.5 py-1.5 rounded-lg transition" data-filter="all">
+                全部指標 (11)
+            </button>
+            <button class="filter-tab bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium px-3.5 py-1.5 rounded-lg transition" data-filter="sentiment">
+                短線情緒與期權
+            </button>
+            <button class="filter-tab bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium px-3.5 py-1.5 rounded-lg transition" data-filter="institution">
+                法人與經理人籌碼
+            </button>
+            <button class="filter-tab bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium px-3.5 py-1.5 rounded-lg transition" data-filter="valuation">
+                長線估值與總經
+            </button>
+            <button class="filter-tab bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium px-3.5 py-1.5 rounded-lg transition" data-filter="taiwan">
+                台股專屬指標
+            </button>
+        </div>
+
+        <!-- Charts Grid (2 columns on Desktop) -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6" id="charts-container">
+
+            <!-- 1. VIX Index -->
+            <div class="chart-card bg-slate-800/90 border border-slate-700/80 rounded-2xl p-4 shadow-xl" data-category="sentiment">
+                <div class="flex items-center justify-between mb-2">
+                    <div class="flex items-center gap-2">
+                        <div class="flex items-center gap-1.5">
+                            <h3 class="text-sm font-bold text-slate-100">1. VIX 恐慌指數</h3>
+                            <!-- Tooltip Icon -->
+                            <div class="group relative inline-block cursor-help">
+                                <i class="fa-solid fa-circle-question text-slate-400 hover:text-indigo-400 text-xs transition"></i>
+                                <div class="pointer-events-none absolute left-0 bottom-full mb-2 hidden group-hover:block w-64 p-2.5 bg-slate-900/95 border border-slate-700 text-slate-200 text-xs rounded-xl shadow-2xl z-50 backdrop-blur-md leading-relaxed">
+                                    <p class="font-bold text-indigo-300 mb-1">VIX 恐慌指數</p>
+                                    反映 S&P 500 指數選擇權隱含波動率。數值 &gt; 30 代表市場處於高度恐慌，歷史上常伴隨短期買點。
+                                    <div class="absolute top-full left-3 -mt-1 border-4 border-transparent border-t-slate-900"></div>
+                                </div>
+                            </div>
+                        </div>
+                        <span class="text-xs bg-slate-700/80 text-slate-300 border border-slate-600 px-1.5 py-0.5 rounded">日更新</span>
+                        <span class="text-xs bg-emerald-950 text-emerald-400 border border-emerald-800 px-1.5 py-0.5 rounded">&gt; 30 超恐慌</span>
+                    </div>
+                    <span id="val-vix" class="text-sm font-mono font-bold text-slate-200">---</span>
+                </div>
+                <div id="chart-vix" class="chart-box"></div>
+            </div>
+
+            <!-- 2. Put/Call Ratio -->
+            <div class="chart-card bg-slate-800/90 border border-slate-700/80 rounded-2xl p-4 shadow-xl" data-category="sentiment">
+                <div class="flex items-center justify-between mb-2">
+                    <div class="flex items-center gap-2">
+                        <div class="flex items-center gap-1.5">
+                            <h3 class="text-sm font-bold text-slate-100">2. CBOE Put/Call Ratio (10日均)</h3>
+                            <div class="group relative inline-block cursor-help">
+                                <i class="fa-solid fa-circle-question text-slate-400 hover:text-indigo-400 text-xs transition"></i>
+                                <div class="pointer-events-none absolute left-0 bottom-full mb-2 hidden group-hover:block w-64 p-2.5 bg-slate-900/95 border border-slate-700 text-slate-200 text-xs rounded-xl shadow-2xl z-50 backdrop-blur-md leading-relaxed">
+                                    <p class="font-bold text-indigo-300 mb-1">Put/Call Ratio (認售/認購比)</p>
+                                    CBOE 選擇權成交量比率。10日均 &gt; 1.1 代表市場過度避險（看空過頭/短底）；&lt; 0.8 代表市場過熱。
+                                    <div class="absolute top-full left-3 -mt-1 border-4 border-transparent border-t-slate-900"></div>
+                                </div>
+                            </div>
+                        </div>
+                        <span class="text-xs bg-slate-700/80 text-slate-300 border border-slate-600 px-1.5 py-0.5 rounded">日更新</span>
+                        <span class="text-xs bg-emerald-950 text-emerald-400 border border-emerald-800 px-1.5 py-0.5 rounded">&gt; 1.1 短底</span>
+                    </div>
+                    <span id="val-putcall" class="text-sm font-mono font-bold text-slate-200">---</span>
+                </div>
+                <div id="chart-putcall" class="chart-box"></div>
+            </div>
+
+            <!-- 3. $SPXA50R -->
+            <div class="chart-card bg-slate-800/90 border border-slate-700/80 rounded-2xl p-4 shadow-xl" data-category="sentiment">
+                <div class="flex items-center justify-between mb-2">
+                    <div class="flex items-center gap-2">
+                        <div class="flex items-center gap-1.5">
+                            <h3 class="text-sm font-bold text-slate-100">3. $SPXA50R (S&P500高於50日線比例)</h3>
+                            <div class="group relative inline-block cursor-help">
+                                <i class="fa-solid fa-circle-question text-slate-400 hover:text-indigo-400 text-xs transition"></i>
+                                <div class="pointer-events-none absolute left-0 bottom-full mb-2 hidden group-hover:block w-64 p-2.5 bg-slate-900/95 border border-slate-700 text-slate-200 text-xs rounded-xl shadow-2xl z-50 backdrop-blur-md leading-relaxed">
+                                    <p class="font-bold text-indigo-300 mb-1">$SPXA50R 市場廣度</p>
+                                    S&P 500 成分股中高於 50 日均線的個股比例。&lt; 17% 表示廣泛超賣；&gt; 80% 表示市場過熱。
+                                    <div class="absolute top-full left-3 -mt-1 border-4 border-transparent border-t-slate-900"></div>
+                                </div>
+                            </div>
+                        </div>
+                        <span class="text-xs bg-slate-700/80 text-slate-300 border border-slate-600 px-1.5 py-0.5 rounded">日更新</span>
+                        <span class="text-xs bg-emerald-950 text-emerald-400 border border-emerald-800 px-1.5 py-0.5 rounded">&lt; 17% 超賣</span>
+                    </div>
+                    <span id="val-spxa50r" class="text-sm font-mono font-bold text-slate-200">---</span>
+                </div>
+                <div id="chart-spxa50r" class="chart-box"></div>
+            </div>
+
+            <!-- 4. CNN Fear & Greed Index -->
+            <div class="chart-card bg-slate-800/90 border border-slate-700/80 rounded-2xl p-4 shadow-xl" data-category="sentiment">
+                <div class="flex items-center justify-between mb-2">
+                    <div class="flex items-center gap-2">
+                        <div class="flex items-center gap-1.5">
+                            <h3 class="text-sm font-bold text-slate-100">4. CNN Fear & Greed Index</h3>
+                            <div class="group relative inline-block cursor-help">
+                                <i class="fa-solid fa-circle-question text-slate-400 hover:text-indigo-400 text-xs transition"></i>
+                                <div class="pointer-events-none absolute left-0 bottom-full mb-2 hidden group-hover:block w-64 p-2.5 bg-slate-900/95 border border-slate-700 text-slate-200 text-xs rounded-xl shadow-2xl z-50 backdrop-blur-md leading-relaxed">
+                                    <p class="font-bold text-indigo-300 mb-1">CNN 恐慌與貪婪指數</p>
+                                    綜合 7 項市場指標（包含波動度、避險需求、市場廣度等）。&lt; 10 代表極度恐慌；&gt; 80 代表極度貪婪。
+                                    <div class="absolute top-full left-3 -mt-1 border-4 border-transparent border-t-slate-900"></div>
+                                </div>
+                            </div>
+                        </div>
+                        <span class="text-xs bg-slate-700/80 text-slate-300 border border-slate-600 px-1.5 py-0.5 rounded">日更新</span>
+                        <span class="text-xs bg-emerald-950 text-emerald-400 border border-emerald-800 px-1.5 py-0.5 rounded">&lt; 10 極度恐慌</span>
+                    </div>
+                    <span id="val-feargreed" class="text-sm font-mono font-bold text-slate-200">---</span>
+                </div>
+                <div id="chart-feargreed" class="chart-box"></div>
+            </div>
+
+            <!-- 5. AAII Sentiment Survey -->
+            <div class="chart-card bg-slate-800/90 border border-slate-700/80 rounded-2xl p-4 shadow-xl" data-category="institution">
+                <div class="flex items-center justify-between mb-2">
+                    <div class="flex items-center gap-2">
+                        <div class="flex items-center gap-1.5">
+                            <h3 class="text-sm font-bold text-slate-100">5. AAII 散戶情緒 (Bull - Bear 差值)</h3>
+                            <div class="group relative inline-block cursor-help">
+                                <i class="fa-solid fa-circle-question text-slate-400 hover:text-indigo-400 text-xs transition"></i>
+                                <div class="pointer-events-none absolute left-0 bottom-full mb-2 hidden group-hover:block w-64 p-2.5 bg-slate-900/95 border border-slate-700 text-slate-200 text-xs rounded-xl shadow-2xl z-50 backdrop-blur-md leading-relaxed">
+                                    <p class="font-bold text-indigo-300 mb-1">AAII 散戶情緒調查</p>
+                                    美國散戶投資人協會每週調查看多與看空比例差值 (Bull - Bear)。極端負值通常代表散戶過度悲觀的反向買點。
+                                    <div class="absolute top-full left-3 -mt-1 border-4 border-transparent border-t-slate-900"></div>
+                                </div>
+                            </div>
+                        </div>
+                        <span class="text-xs bg-indigo-950/80 text-indigo-300 border border-indigo-800 px-1.5 py-0.5 rounded">週更新 (每週四)</span>
+                    </div>
+                    <span id="val-aaii" class="text-sm font-mono font-bold text-slate-200">---</span>
+                </div>
+                <div id="chart-aaii" class="chart-box"></div>
+            </div>
+
+            <!-- 6. NAAIM Exposure Index -->
+            <div class="chart-card bg-slate-800/90 border border-slate-700/80 rounded-2xl p-4 shadow-xl" data-category="institution">
+                <div class="flex items-center justify-between mb-2">
+                    <div class="flex items-center gap-2">
+                        <div class="flex items-center gap-1.5">
+                            <h3 class="text-sm font-bold text-slate-100">6. NAAIM 主動經理人持倉指數</h3>
+                            <div class="group relative inline-block cursor-help">
+                                <i class="fa-solid fa-circle-question text-slate-400 hover:text-indigo-400 text-xs transition"></i>
+                                <div class="pointer-events-none absolute left-0 bottom-full mb-2 hidden group-hover:block w-64 p-2.5 bg-slate-900/95 border border-slate-700 text-slate-200 text-xs rounded-xl shadow-2xl z-50 backdrop-blur-md leading-relaxed">
+                                    <p class="font-bold text-indigo-300 mb-1">NAAIM 主動經理人持倉</p>
+                                    美國主動型基金經理人的股票持倉曝險比例。經理人快速降槓桿（持倉大減）表示熱錢撤退或去槓桿尾聲。
+                                    <div class="absolute top-full left-3 -mt-1 border-4 border-transparent border-t-slate-900"></div>
+                                </div>
+                            </div>
+                        </div>
+                        <span class="text-xs bg-indigo-950/80 text-indigo-300 border border-indigo-800 px-1.5 py-0.5 rounded">週更新 (每週三)</span>
+                    </div>
+                    <span id="val-naaim" class="text-sm font-mono font-bold text-slate-200">---</span>
+                </div>
+                <div id="chart-naaim" class="chart-box"></div>
+            </div>
+
+            <!-- 7. Nasdaq 100 PE Ratio -->
+            <div class="chart-card bg-slate-800/90 border border-slate-700/80 rounded-2xl p-4 shadow-xl" data-category="valuation">
+                <div class="flex items-center justify-between mb-2">
+                    <div class="flex items-center gap-2">
+                        <div class="flex items-center gap-1.5">
+                            <h3 class="text-sm font-bold text-slate-100">7. Nasdaq 100 PE Ratio</h3>
+                            <div class="group relative inline-block cursor-help">
+                                <i class="fa-solid fa-circle-question text-slate-400 hover:text-indigo-400 text-xs transition"></i>
+                                <div class="pointer-events-none absolute left-0 bottom-full mb-2 hidden group-hover:block w-64 p-2.5 bg-slate-900/95 border border-slate-700 text-slate-200 text-xs rounded-xl shadow-2xl z-50 backdrop-blur-md leading-relaxed">
+                                    <p class="font-bold text-indigo-300 mb-1">Nasdaq 100 本益比</p>
+                                    納斯達克 100 指數的整體本益比估值。用於評估科技巨頭與大型成長股當前估值是否過高或偏低。
+                                    <div class="absolute top-full left-3 -mt-1 border-4 border-transparent border-t-slate-900"></div>
+                                </div>
+                            </div>
+                        </div>
+                        <span class="text-xs bg-slate-700/80 text-slate-300 border border-slate-600 px-1.5 py-0.5 rounded">日/月更新</span>
+                    </div>
+                    <span id="val-nasdaqpe" class="text-sm font-mono font-bold text-slate-200">---</span>
+                </div>
+                <div id="chart-nasdaqpe" class="chart-box"></div>
+            </div>
+
+            <!-- 8. Taiwan TAIEX Margin Maintenance Ratio -->
+            <div class="chart-card bg-slate-800/90 border border-slate-700/80 rounded-2xl p-4 shadow-xl" data-category="taiwan">
+                <div class="flex items-center justify-between mb-2">
+                    <div class="flex items-center gap-2">
+                        <div class="flex items-center gap-1.5">
+                            <h3 class="text-sm font-bold text-slate-100">8. 台股融資維持率 (扣除ETF)</h3>
+                            <div class="group relative inline-block cursor-help">
+                                <i class="fa-solid fa-circle-question text-slate-400 hover:text-indigo-400 text-xs transition"></i>
+                                <div class="pointer-events-none absolute left-0 bottom-full mb-2 hidden group-hover:block w-64 p-2.5 bg-slate-900/95 border border-slate-700 text-slate-200 text-xs rounded-xl shadow-2xl z-50 backdrop-blur-md leading-relaxed">
+                                    <p class="font-bold text-indigo-300 mb-1">台股融資維持率</p>
+                                    台灣集中市場扣除 ETF 後的散戶融資維持率。&lt; 130% 接近追繳/斷頭臨界線，歷史上常誘發多頭清洗與短線落底。
+                                    <div class="absolute top-full left-3 -mt-1 border-4 border-transparent border-t-slate-900"></div>
+                                </div>
+                            </div>
+                        </div>
+                        <span class="text-xs bg-slate-700/80 text-slate-300 border border-slate-600 px-1.5 py-0.5 rounded">日更新</span>
+                        <span class="text-xs bg-emerald-950 text-emerald-400 border border-emerald-800 px-1.5 py-0.5 rounded">&lt; 130% 斷頭低點</span>
+                    </div>
+                    <span id="val-twmargin" class="text-sm font-mono font-bold text-slate-200">---</span>
+                </div>
+                <div id="chart-twmargin" class="chart-box"></div>
+            </div>
+
+            <!-- 9. BTC (Bitcoin) Price -->
+            <div class="chart-card bg-slate-800/90 border border-slate-700/80 rounded-2xl p-4 shadow-xl" data-category="sentiment">
+                <div class="flex items-center justify-between mb-2">
+                    <div class="flex items-center gap-2">
+                        <div class="flex items-center gap-1.5">
+                            <h3 class="text-sm font-bold text-slate-100">9. BTC (比特幣價格)</h3>
+                            <div class="group relative inline-block cursor-help">
+                                <i class="fa-solid fa-circle-question text-slate-400 hover:text-indigo-400 text-xs transition"></i>
+                                <div class="pointer-events-none absolute left-0 bottom-full mb-2 hidden group-hover:block w-64 p-2.5 bg-slate-900/95 border border-slate-700 text-slate-200 text-xs rounded-xl shadow-2xl z-50 backdrop-blur-md leading-relaxed">
+                                    <p class="font-bold text-indigo-300 mb-1">BTC 比特幣價格</p>
+                                    全球市場風險偏好與市場流動性的領先指標。高風險資產的資金動向常優先在比特幣價格變化中顯現。
+                                    <div class="absolute top-full left-3 -mt-1 border-4 border-transparent border-t-slate-900"></div>
+                                </div>
+                            </div>
+                        </div>
+                        <span class="text-xs bg-emerald-950/80 text-emerald-300 border border-emerald-800 px-1.5 py-0.5 rounded">即時/日更新</span>
+                    </div>
+                    <span id="val-btc" class="text-sm font-mono font-bold text-slate-200">---</span>
+                </div>
+                <div id="chart-btc" class="chart-box"></div>
+            </div>
+
+            <!-- 10. S&P 500 PE & Forward PE -->
+            <div class="chart-card bg-slate-800/90 border border-slate-700/80 rounded-2xl p-4 shadow-xl" data-category="valuation">
+                <div class="flex items-center justify-between mb-2">
+                    <div class="flex items-center gap-2">
+                        <div class="flex items-center gap-1.5">
+                            <h3 class="text-sm font-bold text-slate-100">10. S&P 500 PE & Forward PE</h3>
+                            <div class="group relative inline-block cursor-help">
+                                <i class="fa-solid fa-circle-question text-slate-400 hover:text-indigo-400 text-xs transition"></i>
+                                <div class="pointer-events-none absolute left-0 bottom-full mb-2 hidden group-hover:block w-64 p-2.5 bg-slate-900/95 border border-slate-700 text-slate-200 text-xs rounded-xl shadow-2xl z-50 backdrop-blur-md leading-relaxed">
+                                    <p class="font-bold text-indigo-300 mb-1">S&P 500 長線估值</p>
+                                    衡量 S&P 500 大盤長線估值（歷史本益比與預估本益比）。偏離歷史平均太多時代表長期預期報酬率將顯著轉變。
+                                    <div class="absolute top-full left-3 -mt-1 border-4 border-transparent border-t-slate-900"></div>
+                                </div>
+                            </div>
+                        </div>
+                        <span class="text-xs bg-slate-700/80 text-slate-300 border border-slate-600 px-1.5 py-0.5 rounded">日/月更新</span>
+                    </div>
+                    <span id="val-sp500pe" class="text-sm font-mono font-bold text-slate-200">---</span>
+                </div>
+                <div id="chart-sp500pe" class="chart-box"></div>
+            </div>
+
+            <!-- 11. MM Bull & Bear Indicator Proxy -->
+            <div class="chart-card bg-slate-800/90 border border-slate-700/80 rounded-2xl p-4 shadow-xl lg:col-span-2" data-category="institution">
+                <div class="flex items-center justify-between mb-2">
+                    <div class="flex items-center gap-2">
+                        <div class="flex items-center gap-1.5">
+                            <h3 class="text-sm font-bold text-slate-100">11. MM 牛熊綜合指標 (反向警告)</h3>
+                            <div class="group relative inline-block cursor-help">
+                                <i class="fa-solid fa-circle-question text-slate-400 hover:text-indigo-400 text-xs transition"></i>
+                                <div class="pointer-events-none absolute left-0 bottom-full mb-2 hidden group-hover:block w-72 p-2.5 bg-slate-900/95 border border-slate-700 text-slate-200 text-xs rounded-xl shadow-2xl z-50 backdrop-blur-md leading-relaxed">
+                                    <p class="font-bold text-indigo-300 mb-1">MM 牛熊綜合指標</p>
+                                    財經 M 平方綜合基本面與籌碼面指標。當指標飆高且在 80 以上維持 1 個月，歷史上記錄常提前 3-5 個月預示大盤出現 10% 以上回檔。
+                                    <div class="absolute top-full left-3 -mt-1 border-4 border-transparent border-t-slate-900"></div>
+                                </div>
+                            </div>
+                        </div>
+                        <span class="text-xs bg-purple-950/80 text-purple-300 border border-purple-800 px-1.5 py-0.5 rounded">月更新</span>
+                        <span class="text-xs bg-rose-950 text-rose-400 border border-rose-800 px-1.5 py-0.5 rounded">&gt; 80 持續1個月預示3-5月後回檔10%</span>
+                    </div>
+                    <span id="val-mmbullbear" class="text-sm font-mono font-bold text-slate-200">---</span>
+                </div>
+                <div id="chart-mmbullbear" class="chart-box" style="height: 240px;"></div>
+            </div>
+
+        </div>
+    </main>
+
+    <!-- Footer -->
+    <footer class="border-t border-slate-800 bg-slate-950 py-6 text-center text-xs text-slate-500">
+        <p>股市多指標情緒儀表板 · 由 GitHub Actions 每日自動更新真實市場數據</p>
+    </footer>
+
+    <script>
+        let dateList = [];
+        let dataSeries = {};
+
+        const chartInstances = {};
+        let masterSyncEnabled = true;
+// ... existing code ... -->
+        function updateTopStats(idx) {
+            if (!dateList.length || idx < 0 || idx >= dateList.length) return;
+            const date = dateList[idx];
+            document.getElementById('focused-date').innerText = date;
+// ... existing code ... -->
+        window.addEventListener('resize', () => {
+            Object.values(chartInstances).forEach(c => c.resize());
+        });
+
+        window.onload = async function() {
+            const statusBadge = document.getElementById('data-status-badge');
+            const errorBanner = document.getElementById('data-error-banner');
+            const errorDetail = document.getElementById('data-error-detail');
+
+            try {
+                // 加入時間戳避免瀏覽器快取舊的 JSON
+                const response = await fetch('./data/market-data.json?t=' + Date.now());
+                if (!response.ok) {
+                    throw new Error(`HTTP 錯誤狀態碼: ${response.status} (${response.statusText})`);
+                }
+
+                const realData = await response.json();
+                if (!realData || !Array.isArray(realData.dates) || realData.dates.length === 0 || !realData.series) {
+                    throw new Error('JSON 檔案格式不正確或缺少 dates / series 數據欄位');
+                }
+
+                dateList = realData.dates;
+                dataSeries = realData.series;
+
+                // 更新頂部資料狀態標籤
+                const updatedTime = realData.updatedAt ? new Date(realData.updatedAt).toLocaleString('zh-TW', { hour12: false }) : '未知時間';
+                statusBadge.innerHTML = `<i class="fa-solid fa-circle-check text-emerald-400"></i> 真實數據 (${updatedTime})`;
+                statusBadge.className = "text-xs font-mono bg-emerald-950/60 text-emerald-300 px-3 py-1.5 rounded-lg border border-emerald-800/80 flex items-center gap-1.5";
+
+                initCharts();
+
+                // 預設聚焦到最新一個交易日
+                const latestIdx = dateList.length - 1;
+                setTimeout(() => {
+                    chartInstances['sp500'].dispatchAction({
+                        type: 'showTip',
+                        seriesIndex: 0,
+                        dataIndex: latestIdx
+                    });
+                    updateTopStats(latestIdx);
+                }, 300);
+
+            } catch (err) {
+                console.error('載入真實數據失敗:', err);
+                statusBadge.innerHTML = `<i class="fa-solid fa-circle-xmark text-rose-400"></i> 讀取失敗`;
+                statusBadge.className = "text-xs font-mono bg-rose-950/80 text-rose-300 px-3 py-1.5 rounded-lg border border-rose-800 flex items-center gap-1.5";
+                
+                document.getElementById('focused-date').innerText = '無資料';
+                errorDetail.innerHTML = `錯誤訊息：<code class="bg-rose-900/60 px-1.5 py-0.5 rounded">${err.message}</code><br/>請確認 <code class="bg-rose-900/60 px-1.5 py-0.5 rounded">data/market-data.json</code> 已由 GitHub Actions 成功生成，且您是透過 GitHub Pages 網址或本機 Web Server 開啟此頁面（不可使用模擬資料替代）。`;
+                errorBanner.classList.remove('hidden');
+            }
+        };
+    </script>
+</body>
+</html>
